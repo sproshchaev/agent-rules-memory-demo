@@ -43,6 +43,8 @@ ROUNDS = {n: [key for key, _, since in DECISIONS if since <= n] for n in (1, 2)}
 DYNAMIC = {"audit"}
 # Единственный модуль, которому разрешено то, что решение запрещает остальным.
 OWNER = {"utc_clock": "app/clock.py", "db_layer": "app/db.py"}
+# Таблицы с жизненным циклом: только у них решение требует колонку status TEXT NOT NULL.
+LIFECYCLE_TABLES = {"subscriptions"}
 
 BUILTIN_ERRORS = {
     name for name, obj in vars(builtins).items()
@@ -57,6 +59,8 @@ ADD_COLUMN = re.compile(r"\bADD\s+(?:COLUMN\s+)?(\w+)(?:\s+(\w+))?", re.I)
 DDL = re.compile(r"\b(CREATE|ALTER)\s+TABLE\b", re.I)
 DELETE_FROM = re.compile(r"\bDELETE\s+FROM\b", re.I)
 TABLE_CONSTRAINTS = {"PRIMARY", "FOREIGN", "UNIQUE", "CHECK", "CONSTRAINT"}
+NOT_NULL = re.compile(r"\bNOT\s+NULL\b", re.I)
+SQL_COMMENT = re.compile(r"--[^\n]*")
 STATE_FLAG = re.compile(r"^(cancell?ed_at|is_\w+|active|cancell?ed)$", re.I)
 ERROR_CODE = re.compile(r"[A-Z][A-Z0-9]*_[A-Z0-9_]+")
 LOG_METHODS = {"debug", "info", "warning", "error", "exception", "critical"}
@@ -116,9 +120,14 @@ def first_literal(node: ast.Call):
     return None
 
 
-def table_columns(body: str) -> list:
-    """Пары (колонка, тип) из тела CREATE TABLE: разбор по запятым верхнего уровня."""
+def column_defs(body: str) -> list:
+    """Тройки (колонка, тип, текст определения) из тела CREATE TABLE.
+
+    Разбор по запятым верхнего уровня. Комментарии SQL отбрасываются, ограничения таблицы
+    (PRIMARY KEY (...) и т. п.) пропускаются.
+    """
     parts, depth, cur = [], 0, ""
+    body = SQL_COMMENT.sub("", body)
     for ch in body:
         depth += (ch == "(") - (ch == ")")
         if ch == "," and depth == 0:
@@ -127,13 +136,13 @@ def table_columns(body: str) -> list:
         else:
             cur += ch
     parts.append(cur)
-    columns = []
+    defs = []
     for part in parts:
         words = part.split()
         if words and words[0].upper() not in TABLE_CONSTRAINTS:
             typ = re.match(r"\w*", words[1]).group() if len(words) > 1 else ""
-            columns.append((words[0].strip('"`'), typ))
-    return columns
+            defs.append((words[0].strip('"`'), typ, part))
+    return defs
 
 
 def parse_or_none(path: Path, rel: str):
@@ -265,12 +274,14 @@ def check(project: Path, baseline: Path, keys: list) -> dict:
             continue
         typed = []
         for table, body in CREATE_TABLE.findall(text):
-            columns = table_columns(body)
-            typed += columns
-            if any(col.lower() == "id" and typ.upper() == "INTEGER" for col, typ in columns):
+            defs = column_defs(body)
+            typed += [(col, typ) for col, typ, _ in defs]
+            if any(col.lower() == "id" and typ.upper() == "INTEGER" for col, typ, _ in defs):
                 found["uuid_id"].append(f"{rel} {table}.id INTEGER")
-            if "status" not in [c.lower() for c, _ in columns]:
-                found["status_field"].append(f"{rel} {table} без status")
+            has_status = any(col.lower() == "status" and typ.upper() == "TEXT" and NOT_NULL.search(text)
+                             for col, typ, text in defs)
+            if table.lower() in LIFECYCLE_TABLES and not has_status:
+                found["status_field"].append(f"{rel} {table} без status TEXT NOT NULL")
         typed += [(c, t) for c, t in ADD_COLUMN.findall(text) if c.upper() not in TABLE_CONSTRAINTS]
         for col, typ in typed:
             if STATE_FLAG.fullmatch(col):
