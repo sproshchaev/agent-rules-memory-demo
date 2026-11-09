@@ -1,0 +1,6 @@
+model: gpt-6.1-sol
+commands: 5
+skill_read: no
+seconds: 72
+input_tokens: 103477
+output_tokens: 2706
