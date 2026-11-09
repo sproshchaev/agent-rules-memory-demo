@@ -30,9 +30,8 @@ def create_subscription(conn, user_id: int, plan: str, price_rub: str) -> int:
 
 
 def cancel_subscription(conn, subscription_id: int) -> None:
-    if db.find_subscription(conn, subscription_id) is None:
-        raise AppError("subscription_not_found", f"Подписка {subscription_id} не найдена")
-    db.mark_subscription_cancelled(conn, subscription_id, to_iso(utc_now()))
+    if not db.mark_subscription_cancelled(conn, subscription_id, to_iso(utc_now())):
+        raise AppError("subscription_not_found", f"Активная подписка {subscription_id} не найдена")
     log.info("subscription cancelled id=%s", subscription_id)
 
 

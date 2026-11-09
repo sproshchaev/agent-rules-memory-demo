@@ -24,6 +24,11 @@ class SubscriptionsTest(unittest.TestCase):
         with self.assertRaises(AppError):
             subscriptions.cancel_subscription(self.conn, sub_id)
 
+    def test_cancel_unknown(self):
+        with self.assertRaises(AppError) as ctx:
+            subscriptions.cancel_subscription(self.conn, 999)
+        self.assertEqual(ctx.exception.code, "subscription_not_found")
+
 
 if __name__ == "__main__":
     unittest.main()

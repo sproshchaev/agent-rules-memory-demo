@@ -50,6 +50,10 @@ def add_audit(conn: sqlite3.Connection, entity: str, entity_id: str, action: str
     conn.commit()
 
 
+# Запись подписки не фиксируется сама: ее фиксирует commit внутри db.add_audit,
+# поэтому изменение и запись аудита попадают в базу одной транзакцией.
+
+
 def insert_subscription(
     conn: sqlite3.Connection, sub_id: str, user_id: int, plan: str, price_kop: int, now: str
 ) -> None:
@@ -58,20 +62,16 @@ def insert_subscription(
         " VALUES (?, ?, ?, ?, 'active', ?, ?)",
         (sub_id, user_id, plan, price_kop, now, now),
     )
-    conn.commit()
 
 
-def find_active_subscription(conn: sqlite3.Connection, sub_id: str):
-    return conn.execute(
-        "SELECT id FROM subscriptions WHERE id = ? AND status = 'active'", (sub_id,)
-    ).fetchone()
-
-
-def set_subscription_status(conn: sqlite3.Connection, sub_id: str, status: str, now: str) -> None:
-    conn.execute(
-        "UPDATE subscriptions SET status = ?, updated_at = ? WHERE id = ?", (status, now, sub_id)
+def mark_subscription_cancelled(conn: sqlite3.Connection, sub_id: str, now: str) -> bool:
+    """Отмена одним условным UPDATE: две параллельные отмены не пройдут обе."""
+    cur = conn.execute(
+        "UPDATE subscriptions SET status = 'cancelled', updated_at = ?"
+        " WHERE id = ? AND status = 'active'",
+        (now, sub_id),
     )
-    conn.commit()
+    return cur.rowcount == 1
 
 
 def sum_active_subscriptions_kop(conn: sqlite3.Connection, date_from: str, date_to: str) -> int:

@@ -53,20 +53,16 @@ def insert_subscription(
     return cur.lastrowid
 
 
-def find_subscription(conn: sqlite3.Connection, subscription_id: int):
-    return conn.execute(
-        "SELECT id FROM subscriptions WHERE id = ? AND cancelled_at IS NULL",
-        (subscription_id,),
-    ).fetchone()
-
-
 def mark_subscription_cancelled(
     conn: sqlite3.Connection, subscription_id: int, cancelled_at: str
-) -> None:
-    conn.execute(
-        "UPDATE subscriptions SET cancelled_at = ? WHERE id = ?", (cancelled_at, subscription_id)
+) -> bool:
+    """Отмена одним условным UPDATE: две параллельные отмены не пройдут обе."""
+    cur = conn.execute(
+        "UPDATE subscriptions SET cancelled_at = ? WHERE id = ? AND cancelled_at IS NULL",
+        (cancelled_at, subscription_id),
     )
     conn.commit()
+    return cur.rowcount == 1
 
 
 def sum_active_subscriptions_kop(conn: sqlite3.Connection, date_from: str, date_to: str) -> int:
